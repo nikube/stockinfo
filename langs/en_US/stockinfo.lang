@@ -1,0 +1,41 @@
+# Copyright (C) 2024 Nicolas Zaoui
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+#
+# StockInfo Module - English
+#
+
+# Module
+ModuleStockInfoName = Stock Info
+ModuleStockInfoDesc = Display stock information column in order/proposal/invoice lines
+
+# Setup
+StockInfoSetup = Stock Info Setup
+StockInfoEnabled = Enable stock column in order lines
+StockInfoEnabledHelp = Show a stock column in order, proposal and invoice lines displaying the available stock for each product
+
+# Calculation mode
+StockInfoCalculationMode = Stock calculation mode
+StockInfoModeSimple = Real stock
+StockInfoModeAdjusted = Adjusted stock
+StockInfoModeSimpleHelp = Display the product's real stock
+StockInfoModeAdjustedHelp = Real stock minus quantities from orders shipped but not billed
+
+# Warehouse
+StockInfoWarehouse = Warehouse
+AllWarehouses = All warehouses
+
+# Column
+Stock = Stock
