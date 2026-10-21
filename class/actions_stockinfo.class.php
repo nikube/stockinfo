@@ -1,5 +1,5 @@
 <?php
-/* Copyright (C) 2024 Nicolas Zaoui
+/* Copyright (C) 2024-2026 Nicolas Zaoui
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,257 +18,184 @@
 /**
  * \file       class/actions_stockinfo.class.php
  * \ingroup    stockinfo
- * \brief      Hook actions for StockInfo module
+ * \brief      Hook: add a "Stock" column after Qty on order/proposal/invoice lines
  */
 
-require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
-
-/**
- * Class ActionsStockInfo
- * Hook actions for displaying stock information in order lines
- */
 class ActionsStockInfo
 {
-    /**
-     * @var DoliDB Database handler
-     */
-    protected $db;
+	/** @var DoliDB */
+	protected $db;
+	public $error = '';
+	public $errors = array();
+	public $resprints = '';
+	public $results = array();
 
-    /**
-     * @var string Error message
-     */
-    public $error = '';
+	public function __construct($db)
+	{
+		$this->db = $db;
+	}
 
-    /**
-     * @var array Errors array
-     */
-    public $errors = array();
+	/**
+	 * Real stock per product over open warehouses (or one warehouse), one query.
+	 *
+	 * @param int[] $productIds
+	 * @param int   $warehouseId 0 = all open warehouses
+	 * @return array<int,float>|null null on SQL error
+	 */
+	protected function getStockByProduct(array $productIds, $warehouseId)
+	{
+		$sql = "SELECT ps.fk_product, SUM(ps.reel) as reel";
+		$sql .= " FROM ".$this->db->prefix()."product_stock as ps";
+		$sql .= " INNER JOIN ".$this->db->prefix()."entrepot as e ON e.rowid = ps.fk_entrepot";
+		$sql .= " WHERE ps.fk_product IN (".$this->db->sanitize(implode(',', $productIds)).")";
+		$sql .= " AND e.entity IN (".getEntity('stock').")";
+		$sql .= " AND e.statut = 1";
+		if ($warehouseId > 0) {
+			$sql .= " AND ps.fk_entrepot = ".((int) $warehouseId);
+		}
+		$sql .= " GROUP BY ps.fk_product";
 
-    /**
-     * @var string Hook result (HTML to print)
-     */
-    public $resprints = '';
+		return $this->fetchQtyMap($sql);
+	}
 
-    /**
-     * @var array Results array
-     */
-    public $results = array();
+	/**
+	 * Qty on orders classified delivered (status 3) but not billed yet, per product, one query.
+	 * Only meaningful when stock is decremented on invoice validation (STOCK_CALCULATE_ON_BILL):
+	 * those quantities are physically gone but still counted in real stock.
+	 *
+	 * @param int[] $productIds
+	 * @return array<int,float>|null null on SQL error
+	 */
+	protected function getShippedUnbilledByProduct(array $productIds)
+	{
+		$sql = "SELECT cd.fk_product, SUM(cd.qty) as reel";
+		$sql .= " FROM ".$this->db->prefix()."commandedet as cd";
+		$sql .= " INNER JOIN ".$this->db->prefix()."commande as c ON c.rowid = cd.fk_commande";
+		$sql .= " WHERE cd.fk_product IN (".$this->db->sanitize(implode(',', $productIds)).")";
+		$sql .= " AND c.entity IN (".getEntity('commande').")";
+		$sql .= " AND c.fk_statut = 3"; // Commande::STATUS_CLOSED (class not loaded on propal/invoice cards)
+		$sql .= " AND c.facture = 0";
+		// ponytail: no warehouse filter, orders carry no warehouse at this stage
+		$sql .= " GROUP BY cd.fk_product";
 
-    /**
-     * Constructor
-     *
-     * @param DoliDB $db Database handler
-     */
-    public function __construct($db)
-    {
-        $this->db = $db;
-    }
+		return $this->fetchQtyMap($sql);
+	}
 
-    /**
-     * Get quantity of a product in orders that are shipped but not billed
-     * (status = 3 (closed/delivered) and facture = 0 (not billed))
-     *
-     * @param int $productId Product ID
-     * @param int $warehouseId Warehouse ID (0 = all)
-     * @return float Quantity in shipped but unbilled orders
-     */
-    protected function getShippedUnbilledQty($productId, $warehouseId = 0)
-    {
-        $sql = "SELECT SUM(cd.qty) as qty";
-        $sql .= " FROM ".$this->db->prefix()."commandedet as cd";
-        $sql .= " INNER JOIN ".$this->db->prefix()."commande as c ON c.rowid = cd.fk_commande";
-        $sql .= " WHERE cd.fk_product = ".((int) $productId);
-        $sql .= " AND c.fk_statut = 3"; // STATUS_CLOSED (delivered)
-        $sql .= " AND c.facture = 0";   // Not billed
+	/**
+	 * @param string $sql Query returning (fk_product, reel)
+	 * @return array<int,float>|null
+	 */
+	private function fetchQtyMap($sql)
+	{
+		$resql = $this->db->query($sql);
+		if (!$resql) {
+			dol_syslog(__METHOD__.' '.$this->db->lasterror(), LOG_ERR);
+			return null;
+		}
+		$map = array();
+		while ($obj = $this->db->fetch_object($resql)) {
+			$map[(int) $obj->fk_product] = (float) $obj->reel;
+		}
+		return $map;
+	}
 
-        // Warehouse filter disabled - orders don't have warehouse assigned at this point
-        // if ($warehouseId > 0) {
-        //     $sql .= " AND c.fk_warehouse = ".((int) $warehouseId);
-        // }
+	/**
+	 * Hook addMoreActionsButtons: inject the Stock column via JS (no line-level hook exists for a new column).
+	 *
+	 * @param array        $parameters
+	 * @param CommonObject $object
+	 * @param string       $action
+	 * @param HookManager  $hookmanager
+	 * @return int 0
+	 */
+	public function addMoreActionsButtons($parameters, &$object, &$action, $hookmanager)
+	{
+		global $langs, $user;
 
-        $resql = $this->db->query($sql);
-        if ($resql) {
-            $obj = $this->db->fetch_object($resql);
-            return (float) ($obj->qty ? $obj->qty : 0);
-        }
-        return 0;
-    }
+		$contexts = explode(':', $parameters['context']);
+		if (!array_intersect(array('ordercard', 'propalcard', 'invoicecard', 'invoicereccard'), $contexts)) {
+			return 0;
+		}
+		if (!$user->hasRight('stock', 'lire') || empty($object->lines)) {
+			return 0;
+		}
 
-    /**
-     * Get stock for a product, optionally filtered by warehouse
-     *
-     * @param Product $product Product object (already fetched)
-     * @param int $warehouseId Warehouse ID (0 = all)
-     * @return float Stock quantity
-     */
-    protected function getStock($product, $warehouseId = 0)
-    {
-        if ($warehouseId > 0) {
-            // Load stock per warehouse
-            $product->load_stock('warehouseopen');
-            if (isset($product->stock_warehouse[$warehouseId])) {
-                return (float) $product->stock_warehouse[$warehouseId]->real;
-            }
-            return 0;
-        }
-        // Return total stock
-        return (float) $product->stock_reel;
-    }
+		$productIds = array();
+		foreach ($object->lines as $line) {
+			if (!empty($line->fk_product)) {
+				$productIds[(int) $line->fk_product] = (int) $line->fk_product;
+			}
+		}
+		if (empty($productIds)) {
+			return 0;
+		}
 
-    /**
-     * Hook to add content at end of page (inject JavaScript for stock column)
-     *
-     * @param array         $parameters Hook parameters
-     * @param CommonObject  $object     Object
-     * @param string        $action     Action
-     * @param HookManager   $hookmanager Hook manager
-     * @return int                      0=OK, <0=KO
-     */
-    public function addMoreActionsButtons($parameters, &$object, &$action, $hookmanager)
-    {
-        global $conf, $langs;
+		$warehouseId = getDolGlobalInt('STOCKINFO_WAREHOUSE_ID');
+		$stocks = $this->getStockByProduct($productIds, $warehouseId);
+		if ($stocks === null) {
+			return 0;
+		}
+		if (getDolGlobalString('STOCKINFO_CALCULATION_MODE') == 'adjusted' && getDolGlobalString('STOCK_CALCULATE_ON_BILL')) {
+			$shipped = $this->getShippedUnbilledByProduct($productIds);
+			if ($shipped === null) {
+				return 0;
+			}
+			foreach ($shipped as $pid => $qty) {
+				$stocks[$pid] = (isset($stocks[$pid]) ? $stocks[$pid] : 0) - $qty;
+			}
+		}
 
-        // Check if module is enabled
-        if (empty($conf->global->STOCKINFO_ENABLED)) {
-            return 0;
-        }
+		// Alert thresholds
+		$alerts = array();
+		$sql = "SELECT rowid, seuil_stock_alerte FROM ".$this->db->prefix()."product WHERE rowid IN (".$this->db->sanitize(implode(',', $productIds)).")";
+		$resql = $this->db->query($sql);
+		while ($resql && ($obj = $this->db->fetch_object($resql))) {
+			$alerts[(int) $obj->rowid] = (float) $obj->seuil_stock_alerte;
+		}
 
-        // Check context
-        $contexts = explode(':', $parameters['context']);
-        if (!array_intersect(array('ordercard', 'propalcard', 'invoicecard', 'invoicereccard'), $contexts)) {
-            return 0;
-        }
+		// lineId => [formatted stock, css class], formatted server-side with user's language
+		$cells = array();
+		foreach ($object->lines as $line) {
+			$pid = (int) $line->fk_product;
+			if (!$pid) {
+				continue;
+			}
+			$stock = isset($stocks[$pid]) ? $stocks[$pid] : 0;
+			$alert = isset($alerts[$pid]) ? $alerts[$pid] : 0;
+			$class = 'opacitymedium';
+			if ($stock < 0 || ($alert > 0 && $stock <= $alert)) {
+				$class = 'error bold';
+			} elseif ($stock > 0) {
+				$class = 'ok';
+			}
+			$cells[$line->id] = array(price($stock, 0, $langs, 0, 0), $class);
+		}
 
-        $langs->load('stockinfo@stockinfo');
+		$langs->load('stockinfo@stockinfo');
+		$json = json_encode(array('label' => $langs->trans('Stock'), 'cells' => $cells));
 
-        // Get configuration
-        $calcMode = getDolGlobalString('STOCKINFO_CALCULATION_MODE', 'simple');
-        $warehouseId = getDolGlobalInt('STOCKINFO_WAREHOUSE_ID', 0);
-
-        // Build stock data for all product lines
-        $stockData = array();
-        if (!empty($object->lines)) {
-            foreach ($object->lines as $line) {
-                if (!empty($line->fk_product) && $line->fk_product > 0) {
-                    $product = new Product($this->db);
-                    $result = $product->fetch($line->fk_product);
-                    if ($result > 0) {
-                        // Get base stock (optionally filtered by warehouse)
-                        $stock = $this->getStock($product, $warehouseId);
-
-                        // If adjusted mode, subtract shipped but unbilled qty
-                        if ($calcMode == 'adjusted') {
-                            $shippedUnbilled = $this->getShippedUnbilledQty($line->fk_product, $warehouseId);
-                            $stock = $stock - $shippedUnbilled;
-                        }
-
-                        $stockData[$line->id] = array(
-                            'stock' => $stock,
-                            'alert' => (float) $product->seuil_stock_alerte
-                        );
-                    }
-                }
-            }
-        }
-
-        // Output JavaScript to inject stock column
-        $stockDataJson = json_encode($stockData);
-        $stockLabel = addslashes($langs->trans('Stock'));
-
-        print <<<SCRIPT
-<script type="text/javascript">
-(function() {
-    var stockData = {$stockDataJson};
-    var stockLabel = '{$stockLabel}';
-
-    console.log('StockInfo: Script loaded, stockData=', stockData);
-
-    function addStockColumn() {
-        console.log('StockInfo: addStockColumn called');
-
-        // Find the Qty column header directly (more reliable than finding row first)
-        var qtyHeader = document.querySelector('th.linecolqty');
-        console.log('StockInfo: qtyHeader=', qtyHeader);
-        if (!qtyHeader) {
-            console.log('StockInfo: No qty header found, retrying...');
-            setTimeout(addStockColumn, 200);
-            return;
-        }
-
-        // Get the header row from the qty header
-        var headerRow = qtyHeader.parentNode;
-        console.log('StockInfo: headerRow=', headerRow);
-
-        // Check if stock column already exists
-        if (headerRow.querySelector('th.linecolstock')) {
-            console.log('StockInfo: Stock column already exists');
-            return;
-        }
-
-        // Create stock header
-        var stockHeader = document.createElement('th');
-        stockHeader.className = 'linecolstock right nowrap';
-        stockHeader.innerHTML = stockLabel;
-
-        // Insert after qty column
-        qtyHeader.parentNode.insertBefore(stockHeader, qtyHeader.nextSibling);
-        console.log('StockInfo: Header inserted');
-
-        // Add stock cells to each data row
-        var dataRows = document.querySelectorAll('tr.oddeven[data-id]');
-        console.log('StockInfo: Found ' + dataRows.length + ' data rows');
-
-        dataRows.forEach(function(row) {
-            var lineId = row.getAttribute('data-id');
-            var qtyCell = row.querySelector('td.linecolqty');
-
-            console.log('StockInfo: Processing row ' + lineId + ', qtyCell=', qtyCell);
-
-            if (qtyCell && !row.querySelector('td.linecolstock')) {
-                var stockCell = document.createElement('td');
-                stockCell.className = 'linecolstock right nowrap';
-
-                if (stockData[lineId]) {
-                    var stock = stockData[lineId].stock;
-                    var alert = stockData[lineId].alert;
-
-                    // Format number
-                    var stockFormatted = parseFloat(stock).toLocaleString('fr-FR', {minimumFractionDigits: 0, maximumFractionDigits: 2});
-
-                    // Color coding: green for positive, red for negative or at/below alert
-                    if (stock < 0 || (alert > 0 && stock <= alert)) {
-                        stockCell.style.color = '#ff0000';
-                        stockCell.style.fontWeight = 'bold';
-                    } else if (stock > 0) {
-                        stockCell.style.color = '#008800';
-                    }
-
-                    stockCell.innerHTML = stockFormatted;
-                    console.log('StockInfo: Added stock ' + stockFormatted + ' to row ' + lineId);
-                }
-
-                qtyCell.parentNode.insertBefore(stockCell, qtyCell.nextSibling);
-            }
-        });
-
-        // Update colspan for action cells (last cells that span multiple columns)
-        var actionCells = document.querySelectorAll('tr.oddeven td[colspan]');
-        actionCells.forEach(function(cell) {
-            var currentColspan = parseInt(cell.getAttribute('colspan')) || 1;
-            cell.setAttribute('colspan', currentColspan + 1);
-        });
-
-        console.log('StockInfo: Done');
-    }
-
-    // Run with multiple attempts to ensure DOM is ready
-    setTimeout(addStockColumn, 100);
-    setTimeout(addStockColumn, 500);
-    setTimeout(addStockColumn, 1000);
+		print '<script>
+(function () {
+	var d = '.$json.';
+	function run() {
+		var qtyHeader = document.querySelector("th.linecolqty");
+		if (!qtyHeader || qtyHeader.parentNode.querySelector("th.linecolstock")) return;
+		var th = document.createElement("th");
+		th.className = "linecolstock right nowrap";
+		th.textContent = d.label;
+		qtyHeader.after(th);
+		qtyHeader.closest("table").querySelectorAll("td.linecolqty").forEach(function (qtyCell) {
+			var td = document.createElement("td");
+			td.className = "linecolstock right nowrap";
+			var c = d.cells[qtyCell.parentNode.getAttribute("data-id")];
+			if (c) { td.textContent = c[0]; td.className += " " + c[1]; }
+			qtyCell.after(td);
+		});
+	}
+	document.readyState === "loading" ? document.addEventListener("DOMContentLoaded", run) : run();
 })();
-</script>
-SCRIPT;
+</script>';
 
-        return 0;
-    }
+		return 0;
+	}
 }

@@ -1,5 +1,5 @@
 <?php
-/* Copyright (C) 2024 Nicolas Zaoui
+/* Copyright (C) 2024-2026 Nicolas Zaoui
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,7 +42,7 @@ class modStockInfo extends DolibarrModules
         $this->db = $db;
 
         // Module ID (unique)
-        $this->numero = 500100;
+        $this->numero = 194053;
 
         // Module family
         $this->family = "products";
@@ -62,10 +62,10 @@ class modStockInfo extends DolibarrModules
         $this->editor_url = '';
 
         // Version
-        $this->version = '1.0.0';
+        $this->version = '1.1.0';
 
         // Min Dolibarr version
-        $this->need_dolibarr_version = array(14, 0);
+        $this->need_dolibarr_version = array(18, 0);
 
         // Constants
         $this->const_name = 'MAIN_MODULE_'.strtoupper($this->name);
@@ -94,9 +94,7 @@ class modStockInfo extends DolibarrModules
         $this->langfiles = array("stockinfo@stockinfo");
 
         // Module constants
-        $this->const = array(
-            0 => array('STOCKINFO_ENABLED', 'chaine', '1', 'Enable stock info column in order lines', 0),
-        );
+        $this->const = array();
 
         // Tabs
         $this->tabs = array();
@@ -126,11 +124,6 @@ class modStockInfo extends DolibarrModules
      */
     public function init($options = '')
     {
-        $result = $this->_load_tables('/stockinfo/sql/');
-        if ($result < 0) {
-            return -1;
-        }
-
         return $this->_init(array(), $options);
     }
 

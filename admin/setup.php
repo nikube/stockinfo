@@ -1,5 +1,5 @@
 <?php
-/* Copyright (C) 2024 Nicolas Zaoui
+/* Copyright (C) 2024-2026 Nicolas Zaoui
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,158 +21,105 @@
  * \brief      Setup page for StockInfo module
  */
 
-// Load Dolibarr environment
 $res = 0;
 if (!$res && file_exists("../../main.inc.php")) {
-    $res = @include "../../main.inc.php";
+	$res = @include "../../main.inc.php";
 }
 if (!$res && file_exists("../../../main.inc.php")) {
-    $res = @include "../../../main.inc.php";
+	$res = @include "../../../main.inc.php";
 }
 if (!$res && file_exists("../../../../main.inc.php")) {
-    $res = @include "../../../../main.inc.php";
+	$res = @include "../../../../main.inc.php";
 }
 if (!$res) {
-    die("Include of main fails");
+	die("Include of main fails");
 }
 
-// Libraries
 require_once DOL_DOCUMENT_ROOT.'/core/lib/admin.lib.php';
 require_once DOL_DOCUMENT_ROOT.'/product/stock/class/entrepot.class.php';
 
-// Translations
 $langs->loadLangs(array('admin', 'stocks', 'stockinfo@stockinfo'));
 
-// Access control
 if (!$user->admin) {
-    accessforbidden();
+	accessforbidden();
 }
 
-// Parameters
 $action = GETPOST('action', 'aZ09');
+$warehouses = (new Entrepot($db))->list_array(1);
+if (!is_array($warehouses)) {
+	$warehouses = array();
+}
 
 /*
  * Actions
  */
 
-if ($action == 'update') {
-    $error = 0;
-
-    // STOCKINFO_ENABLED
-    if (GETPOST('STOCKINFO_ENABLED', 'alpha') == 'on') {
-        dolibarr_set_const($db, 'STOCKINFO_ENABLED', '1', 'chaine', 0, '', $conf->entity);
-    } else {
-        dolibarr_set_const($db, 'STOCKINFO_ENABLED', '0', 'chaine', 0, '', $conf->entity);
-    }
-
-    // STOCKINFO_CALCULATION_MODE
-    $calcMode = GETPOST('STOCKINFO_CALCULATION_MODE', 'alpha');
-    dolibarr_set_const($db, 'STOCKINFO_CALCULATION_MODE', $calcMode, 'chaine', 0, '', $conf->entity);
-
-    // STOCKINFO_WAREHOUSE_ID
-    $warehouseId = GETPOSTINT('STOCKINFO_WAREHOUSE_ID');
-    dolibarr_set_const($db, 'STOCKINFO_WAREHOUSE_ID', $warehouseId, 'chaine', 0, '', $conf->entity);
-
-    if (!$error) {
-        setEventMessages($langs->trans("SetupSaved"), null, 'mesgs');
-    } else {
-        setEventMessages($langs->trans("Error"), null, 'errors');
-    }
+if ($action == 'update' && $_SERVER['REQUEST_METHOD'] == 'POST') {
+	$calcMode = GETPOST('STOCKINFO_CALCULATION_MODE', 'aZ09');
+	$warehouseId = GETPOSTINT('STOCKINFO_WAREHOUSE_ID');
+	if (!in_array($calcMode, array('simple', 'adjusted')) || ($warehouseId && !isset($warehouses[$warehouseId]))) {
+		setEventMessages($langs->trans("ErrorBadValue"), null, 'errors');
+	} elseif (dolibarr_set_const($db, 'STOCKINFO_CALCULATION_MODE', $calcMode, 'chaine', 0, '', $conf->entity) > 0
+		&& dolibarr_set_const($db, 'STOCKINFO_WAREHOUSE_ID', $warehouseId, 'chaine', 0, '', $conf->entity) > 0) {
+		setEventMessages($langs->trans("SetupSaved"), null, 'mesgs');
+	} else {
+		setEventMessages($langs->trans("Error"), null, 'errors');
+	}
 }
 
 /*
  * View
  */
 
-$page_name = "StockInfoSetup";
-llxHeader('', $langs->trans($page_name));
+llxHeader('', $langs->trans("StockInfoSetup"));
 
-// Subheader
 $linkback = '<a href="'.DOL_URL_ROOT.'/admin/modules.php?restore_lastsearch_values=1">'.$langs->trans("BackToModuleList").'</a>';
+print load_fiche_titre($langs->trans("StockInfoSetup"), $linkback, 'title_setup');
 
-print load_fiche_titre($langs->trans($page_name), $linkback, 'title_setup');
-
-// Configuration header
-$head = array();
-$h = 0;
-$head[$h][0] = dol_buildpath('/stockinfo/admin/setup.php', 1);
-$head[$h][1] = $langs->trans("Settings");
-$head[$h][2] = 'settings';
-$h++;
-
+$head = array(array(dol_buildpath('/stockinfo/admin/setup.php', 1), $langs->trans("Settings"), 'settings'));
 print dol_get_fiche_head($head, 'settings', $langs->trans("ModuleStockInfoName"), -1, 'stock');
 
-// Setup form
-print '<form method="POST" action="'.$_SERVER["PHP_SELF"].'">';
+$currentCalcMode = getDolGlobalString('STOCKINFO_CALCULATION_MODE', 'simple');
+$currentWarehouseId = getDolGlobalInt('STOCKINFO_WAREHOUSE_ID');
+
+print '<form method="POST" action="'.dol_escape_htmltag($_SERVER["PHP_SELF"]).'">';
 print '<input type="hidden" name="token" value="'.newToken().'">';
 print '<input type="hidden" name="action" value="update">';
 
 print '<table class="noborder centpercent">';
-print '<tr class="liste_titre">';
-print '<td>'.$langs->trans("Parameter").'</td>';
-print '<td class="center" width="300">'.$langs->trans("Value").'</td>';
-print '</tr>';
+print '<tr class="liste_titre"><td>'.$langs->trans("Parameter").'</td><td class="center" width="300">'.$langs->trans("Value").'</td></tr>';
 
-// STOCKINFO_ENABLED
-print '<tr class="oddeven">';
-print '<td>'.$langs->trans("StockInfoEnabled").'</td>';
-print '<td class="center">';
-print '<input type="checkbox" name="STOCKINFO_ENABLED"'.(!empty($conf->global->STOCKINFO_ENABLED) ? ' checked' : '').'>';
-print '</td>';
-print '</tr>';
-
-// STOCKINFO_CALCULATION_MODE
-$currentCalcMode = getDolGlobalString('STOCKINFO_CALCULATION_MODE', 'simple');
-print '<tr class="oddeven">';
-print '<td>'.$langs->trans("StockInfoCalculationMode").'</td>';
-print '<td class="center">';
+print '<tr class="oddeven"><td>'.$langs->trans("StockInfoCalculationMode").'</td><td class="center">';
 print '<select name="STOCKINFO_CALCULATION_MODE" class="flat minwidth200">';
-print '<option value="simple"'.($currentCalcMode == 'simple' ? ' selected' : '').'>'.$langs->trans("StockInfoModeSimple").'</option>';
-print '<option value="adjusted"'.($currentCalcMode == 'adjusted' ? ' selected' : '').'>'.$langs->trans("StockInfoModeAdjusted").'</option>';
-print '</select>';
-print '</td>';
-print '</tr>';
+foreach (array('simple' => 'StockInfoModeSimple', 'adjusted' => 'StockInfoModeAdjusted') as $k => $v) {
+	print '<option value="'.$k.'"'.($currentCalcMode == $k ? ' selected' : '').'>'.$langs->trans($v).'</option>';
+}
+print '</select></td></tr>';
 
-// STOCKINFO_WAREHOUSE_ID
-$currentWarehouseId = getDolGlobalInt('STOCKINFO_WAREHOUSE_ID', 0);
-print '<tr class="oddeven">';
-print '<td>'.$langs->trans("StockInfoWarehouse").'</td>';
-print '<td class="center">';
+print '<tr class="oddeven"><td>'.$langs->trans("StockInfoWarehouse").'</td><td class="center">';
 print '<select name="STOCKINFO_WAREHOUSE_ID" class="flat minwidth200">';
 print '<option value="0"'.($currentWarehouseId == 0 ? ' selected' : '').'>'.$langs->trans("AllWarehouses").'</option>';
-
-// Load warehouses
-$warehouse = new Entrepot($db);
-$warehouseList = $warehouse->list_array(1); // 1 = only open warehouses
-if (is_array($warehouseList)) {
-    foreach ($warehouseList as $whId => $whLabel) {
-        print '<option value="'.$whId.'"'.($currentWarehouseId == $whId ? ' selected' : '').'>'.htmlspecialchars($whLabel).'</option>';
-    }
+foreach ($warehouses as $whId => $whLabel) {
+	print '<option value="'.((int) $whId).'"'.($currentWarehouseId == $whId ? ' selected' : '').'>'.dol_escape_htmltag($whLabel).'</option>';
 }
 print '</select>';
-print '</td>';
-print '</tr>';
-
+if ($currentWarehouseId && !isset($warehouses[$currentWarehouseId])) {
+	print '<br><span class="error">'.$langs->trans("StockInfoWarehouseUnavailable").'</span>';
+}
+print '</td></tr>';
 print '</table>';
 
-print '<br>';
-
-// Help text
-print '<div class="opacitymedium">';
-print '<strong>'.$langs->trans("StockInfoModeSimple").':</strong> '.$langs->trans("StockInfoModeSimpleHelp").'<br>';
-print '<strong>'.$langs->trans("StockInfoModeAdjusted").':</strong> '.$langs->trans("StockInfoModeAdjustedHelp");
+print '<br><div class="opacitymedium">';
+print '<strong>'.$langs->trans("StockInfoModeSimple").' :</strong> '.$langs->trans("StockInfoModeSimpleHelp").'<br>';
+print '<strong>'.$langs->trans("StockInfoModeAdjusted").' :</strong> '.$langs->trans("StockInfoModeAdjustedHelp");
+if ($currentCalcMode == 'adjusted' && !getDolGlobalString('STOCK_CALCULATE_ON_BILL')) {
+	print '<br><span class="error">'.$langs->trans("StockInfoAdjustedNeedsBill").'</span>';
+}
 print '</div>';
 
-print '<br>';
-
-print '<div class="center">';
-print '<input type="submit" class="button" value="'.$langs->trans("Save").'">';
-print '</div>';
-
+print '<br><div class="center"><input type="submit" class="button" value="'.$langs->trans("Save").'"></div>';
 print '</form>';
 
 print dol_get_fiche_end();
-
-// Footer
 llxFooter();
 $db->close();

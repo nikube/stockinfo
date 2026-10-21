@@ -23,15 +23,15 @@ ModuleStockInfoDesc = Display stock information column in order/proposal/invoice
 
 # Setup
 StockInfoSetup = Stock Info Setup
-StockInfoEnabled = Enable stock column in order lines
-StockInfoEnabledHelp = Show a stock column in order, proposal and invoice lines displaying the available stock for each product
 
 # Calculation mode
 StockInfoCalculationMode = Stock calculation mode
 StockInfoModeSimple = Real stock
 StockInfoModeAdjusted = Adjusted stock
 StockInfoModeSimpleHelp = Display the product's real stock
-StockInfoModeAdjustedHelp = Real stock minus quantities from orders shipped but not billed
+StockInfoModeAdjustedHelp = Real stock minus quantities of orders classified delivered but not billed (stock decremented on invoice; all warehouses)
+StockInfoAdjustedNeedsBill = Adjusted mode only applies when stock is decremented on invoice validation (STOCK_CALCULATE_ON_BILL); otherwise real stock is shown.
+StockInfoWarehouseUnavailable = The configured warehouse is closed or deleted: displayed stock is 0, pick another warehouse.
 
 # Warehouse
 StockInfoWarehouse = Warehouse
